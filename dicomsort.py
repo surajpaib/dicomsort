@@ -25,6 +25,7 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+from multiprocessing import Pool
 
 # special public packages
 try:
@@ -50,7 +51,6 @@ class DICOMSorter(object):
     """
 
     def __init__(self):
-
         self.flagToOptions = {
                 '-v': 'verbose',
                 '--verbose': 'verbose',
@@ -69,7 +69,9 @@ class DICOMSorter(object):
                 '-u': 'unsafe',
                 '--unsafe': 'unsafe',
                 '-r': 'truncateTime',
-                '--truncateTime': 'truncateTime'
+                '--truncateTime': 'truncateTime',
+                '-j': 'jobs',
+                '--jobs': 'jobs'
                 }
 
         self.defaultOptions = {
@@ -83,7 +85,8 @@ class DICOMSorter(object):
                 'symlink': False,
                 'test': False,
                 'unsafe': False,
-                'truncateTime': False
+                'truncateTime': False,
+                'jobs': 1
                 }
 
         self.requiredOptions = [ 'sourceDir', 'targetPattern', ]
@@ -205,20 +208,42 @@ class DICOMSorter(object):
         if self.options['verbose']:
             print("Sorting files ...")
 
+
+        def renameFilesInParallel(files):
+            """Rename a list of files in parallel"""
+            pool = Pool(processes=self.options['jobs'])
+            with tqdm(total=len(files)) as pbar:
+                for flag in pool.imap_unordered(self.renameFile, files):
+                    if flag:
+                        self.filesRenamed += 1
+                    else:
+                        self.filesSkipped += 1
+                    pbar.update()
+            pool.close()
+            pool.join()
+
         try:
             from tqdm import tqdm
             pbar = tqdm(total=len(allFiles))
         except ImportError:
             pbar = None
-        for file in allFiles:
-            if self.options['verbose']:
-                print("Considering file %s" % file)
-            if self.renameFile(file):
-                self.filesRenamed += 1
-            else:
-                self.filesSkipped += 1
-            if pbar is not None:
-                pbar.update(1)
+
+        if self.options['jobs'] > 1:
+            # Right now parallel processing is only supported when keepGoing is true
+            if not self.options['keepGoing']:
+                print("Parallel processing is only supported when keepGoing is true")
+                return sys.exit(1)
+            renameFilesInParallel(allFiles)
+      
+        else:
+            for file in allFiles:
+                if self.renameFile(file):
+                    self.filesRenamed += 1
+                else:
+                    self.filesSkipped += 1
+                if pbar is not None:
+                    pbar.update(1)
+
         if pbar is not None:
             pbar.close()
 
@@ -230,6 +255,9 @@ class DICOMSorter(object):
         """Rename a single file according to the current options.
         Return true on success"""
         # check for dicom file
+        if self.options['verbose']:
+            print("Considering file %s" % file)
+
         try:
             ds = dicom.read_file(file,stop_before_pixels=True)
         except (IOError, os.error) as why:
@@ -254,8 +282,7 @@ class DICOMSorter(object):
         # make new directories to hold file if needed
         targetDir = os.path.dirname(path)
         targetFileName = os.path.basename(path)
-        if not os.path.exists(targetDir):
-            os.makedirs(targetDir)
+        os.makedirs(targetDir, exist_ok=True)
 
         try:
             if self.options['symlink']:
@@ -368,6 +395,8 @@ dicomsort [options...] sourceDir targetDir/<patterns>
     [-s,--symlink] - create a symlink to dicom files in sourceDir instead of copying them
     [-t,--test] - run the built in self test (requires internet)
     [-u,--unsafe] - do not replace unsafe characters with '_' in the path
+    [-j,--jobs] - number of jobs to run in parallel (default 1)
+
     [--help] - print this message
 
  where sourceDir is directory to be scanned or "" (null string) to read file list from stdin
@@ -450,7 +479,10 @@ def parseArgs(sorter,args):
         if arg == '--help':
             usage()
             sys.exit()
-        if arg in sorter.flagToOptions.keys():
+        
+        if arg == "-j" or arg == "--jobs":
+            options['jobs'] = int(args.pop(0))
+        elif arg in sorter.flagToOptions.keys():
             options[sorter.flagToOptions[arg]] = True
         elif arg.startswith('-'):
             usage()
