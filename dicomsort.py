@@ -64,6 +64,8 @@ class DICOMSorter(object):
                 '--keepGoing': 'keepGoing',
                 '-s': 'symlink',
                 '--symlink': 'symlink',
+                '-m': 'move',
+                '--move': 'move',
                 '-t': 'test',
                 '--test': 'test',
                 '-u': 'unsafe',
@@ -83,6 +85,7 @@ class DICOMSorter(object):
                 'keepGoing': False,
                 'verbose': False,
                 'symlink': False,
+                'move': False,
                 'test': False,
                 'unsafe': False,
                 'truncateTime': False,
@@ -289,6 +292,10 @@ class DICOMSorter(object):
                 os.symlink(file, path)
                 if self.options['verbose']:
                     print("Symlinked %s, to %s" % (file,path))
+            elif self.options['move']:
+                shutil.move(file,path)
+                if self.options['verbose']:
+                    print("Moved %s, to %s" % (file,path))                    
             else:
                 shutil.copyfile(file,path)
                 if self.options['verbose']:
